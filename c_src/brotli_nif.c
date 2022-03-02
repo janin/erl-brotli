@@ -201,6 +201,7 @@ static ERL_NIF_TERM brotli_encoder_compress_stream(ErlNifEnv *env, int argc,
   BrotliEncoderState **state;
   BrotliEncoderOperation op;
   ErlNifBinary input;
+  ErlNifBinary output;
 
   if (!enif_get_resource(env, argv[0], encoder_state_resource_type,
                          (void **)&state)) {
@@ -215,25 +216,43 @@ static ERL_NIF_TERM brotli_encoder_compress_stream(ErlNifEnv *env, int argc,
     return BADARG;
   }
 
-  size_t available_out = 0;
+
   size_t available_in = input.size;
   const uint8_t *next_in = input.data;
+  size_t available_out = 0;
+  uint8_t *next_out = NULL;
+  BROTLI_BOOL result = BROTLI_TRUE;
 
-  return EBOOL(BrotliEncoderCompressStream(*state, op, &available_in, &next_in,
-                                           &available_out, NULL, NULL));
-}
-
-static ERL_NIF_TERM brotli_encoder_has_more_output(ErlNifEnv *env, int argc,
-                                                   const ERL_NIF_TERM argv[]) {
-  assert_argc(1);
-  BrotliEncoderState **state;
-
-  if (!enif_get_resource(env, argv[0], encoder_state_resource_type,
-                         (void **)&state)) {
-    return BADARG;
+  if (!enif_alloc_binary(0, &output)) {
+    return atom_error;
   }
 
-  return EBOOL(BrotliEncoderHasMoreOutput(*state));
+  do {
+     result = BrotliEncoderCompressStream(*state, op, &available_in, &next_in,
+                                          &available_out, &next_out, NULL);
+
+    if (!result) {
+      break;
+    }
+
+    size_t output_chunk_size = 0; // Request all available output.
+    const uint8_t* data = BrotliEncoderTakeOutput(*state, &output_chunk_size);
+
+    if (output_chunk_size) {
+      if (!enif_realloc_binary(&output, output_chunk_size + output.size)) {
+        result = BROTLI_FALSE;
+        break;
+      }
+      memcpy(output.data + output.size - output_chunk_size, data, output_chunk_size);
+    }
+  } while (available_in || BrotliEncoderHasMoreOutput(*state));
+
+  if (result) {
+    return enif_make_tuple2(env, atom_ok, enif_make_binary(env, &output));
+  }
+
+  enif_release_binary(&output);
+  return atom_error;
 }
 
 static ERL_NIF_TERM brotli_encoder_is_finished(ErlNifEnv *env, int argc,
@@ -249,26 +268,6 @@ static ERL_NIF_TERM brotli_encoder_is_finished(ErlNifEnv *env, int argc,
   return EBOOL(BrotliEncoderIsFinished(*state));
 }
 
-static ERL_NIF_TERM brotli_encoder_take_output(ErlNifEnv *env, int argc,
-                                               const ERL_NIF_TERM argv[]) {
-  assert_argc(1);
-  BrotliEncoderState **state;
-  ErlNifBinary output;
-
-  if (!enif_get_resource(env, argv[0], encoder_state_resource_type,
-                         (void **)&state)) {
-    return BADARG;
-  }
-
-  size_t size = 0;
-  const uint8_t *data = BrotliEncoderTakeOutput(*state, &size);
-
-  enif_alloc_binary(size, &output);
-
-  memcpy(output.data, data, output.size);
-
-  return enif_make_binary(env, &output);
-}
 /* }}} */
 
 /* DECODER {{{ */
@@ -301,6 +300,7 @@ brotli_decoder_decompress_stream(ErlNifEnv *env, int argc,
 
   BrotliDecoderState **state;
   ErlNifBinary input;
+  ErlNifBinary output;
 
   if (!enif_get_resource(env, argv[0], decoder_state_resource_type,
                          (void **)&state)) {
@@ -311,24 +311,45 @@ brotli_decoder_decompress_stream(ErlNifEnv *env, int argc,
     return BADARG;
   }
 
-  size_t available_out = 0;
   size_t available_in = input.size;
   const uint8_t *next_in = input.data;
+  size_t available_out = 0;
+  uint8_t *next_out = NULL;
 
-  BrotliDecoderResult result = BrotliDecoderDecompressStream(
-      *state, &available_in, &next_in, &available_out, NULL, NULL);
-
-  switch (result) {
-  case BROTLI_DECODER_RESULT_SUCCESS:
-  case BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT:
-    return atom_ok;
-
-  case BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT:
-    return atom_more;
-
-  default:
+  if (!enif_alloc_binary(0, &output)) {
     return atom_error;
   }
+
+  BrotliDecoderResult result = BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT;
+
+  while (result == BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT ||
+        BrotliDecoderHasMoreOutput(*state)) {
+
+    result = BrotliDecoderDecompressStream(*state,
+                                           &available_in, &next_in,
+                                           &available_out, &next_out, NULL);
+
+    if (result == BROTLI_DECODER_RESULT_ERROR) {
+      break;
+    }
+
+    size_t output_chunk_size = 0; // Request all available output.
+    const uint8_t* data = BrotliDecoderTakeOutput(*state, &output_chunk_size);
+    if (output_chunk_size) {
+      if (!enif_realloc_binary(&output, output_chunk_size + output.size)) {
+        result = BROTLI_DECODER_RESULT_ERROR;
+        break;
+      }
+      memcpy(output.data + output.size - output_chunk_size, data, output_chunk_size);
+    }
+  }
+
+  if (result != BROTLI_DECODER_RESULT_ERROR) {
+    return enif_make_tuple2(env, atom_ok, enif_make_binary(env, &output)); 
+  }
+
+  enif_release_binary(&output);
+  return atom_error;
 }
 
 static ERL_NIF_TERM brotli_decoder_is_used(ErlNifEnv *env, int argc,
@@ -344,18 +365,6 @@ static ERL_NIF_TERM brotli_decoder_is_used(ErlNifEnv *env, int argc,
   return EBOOL(BrotliDecoderIsUsed(*state));
 }
 
-static ERL_NIF_TERM brotli_decoder_has_more_output(ErlNifEnv *env, int argc,
-                                                   const ERL_NIF_TERM argv[]) {
-  assert_argc(1);
-  BrotliDecoderState **state;
-
-  if (!enif_get_resource(env, argv[0], decoder_state_resource_type,
-                         (void **)&state)) {
-    return BADARG;
-  }
-
-  return EBOOL(BrotliDecoderHasMoreOutput(*state));
-}
 
 static ERL_NIF_TERM brotli_decoder_is_finished(ErlNifEnv *env, int argc,
                                                const ERL_NIF_TERM argv[]) {
@@ -368,27 +377,6 @@ static ERL_NIF_TERM brotli_decoder_is_finished(ErlNifEnv *env, int argc,
   }
 
   return EBOOL(BrotliDecoderIsFinished(*state));
-}
-
-static ERL_NIF_TERM brotli_decoder_take_output(ErlNifEnv *env, int argc,
-                                               const ERL_NIF_TERM argv[]) {
-  assert_argc(1);
-  BrotliDecoderState **state;
-  ErlNifBinary output;
-
-  if (!enif_get_resource(env, argv[0], decoder_state_resource_type,
-                         (void **)&state)) {
-    return BADARG;
-  }
-
-  size_t size = 0;
-  const uint8_t *data = BrotliDecoderTakeOutput(*state, &size);
-
-  enif_alloc_binary(size, &output);
-
-  memcpy(output.data, data, output.size);
-
-  return enif_make_binary(env, &output);
 }
 
 // XXX: Maybe we should provide atom return there
@@ -468,23 +456,16 @@ static ErlNifFunc brotli_exports[] = {
     /* Encoder functions */
     {"encoder_create", 0, brotli_encoder_create},
     {"encoder_set_parameter", 3, brotli_encoder_set_parameter},
-    {"encoder_has_more_output", 1, brotli_encoder_has_more_output},
     {"encoder_is_finished", 1, brotli_encoder_is_finished},
     {"encoder_compress_stream", 3, brotli_encoder_compress_stream,
      ERL_NIF_DIRTY_JOB_CPU_BOUND},
-    {"encoder_take_output", 1, brotli_encoder_take_output,
-     ERL_NIF_DIRTY_JOB_CPU_BOUND},
     /* Decoder functions */
     {"decoder_create", 0, brotli_decoder_create},
-    {"decoder_has_more_output", 1, brotli_decoder_has_more_output},
     {"decoder_is_finished", 1, brotli_decoder_is_finished},
     {"decoder_is_used", 1, brotli_decoder_is_used},
     {"decoder_error_description", 1, brotli_decoder_error_description},
     {"decoder_decompress_stream", 2, brotli_decoder_decompress_stream,
      ERL_NIF_DIRTY_JOB_CPU_BOUND},
-    {"decoder_take_output", 1, brotli_decoder_take_output,
-     ERL_NIF_DIRTY_JOB_CPU_BOUND},
-    /* Utils */
     {"max_compressed_size", 1, brotli_max_compressed_size},
     {"version", 0, brotli_version},
 };
