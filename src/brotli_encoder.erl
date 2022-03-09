@@ -72,32 +72,18 @@ set_opts(Encoder, Opts) when is_map(Opts) ->
 
 -spec append(Encoder :: t(), Data :: iodata()) -> {ok, iodata()} | error.
 append(Encoder, Data) ->
-    case brotli_nif:encoder_compress_stream(Encoder, process, Data) of
-        true ->
-            {ok, extract_output(Encoder)};
-        false ->
-            error
-    end.
+    brotli_nif:encoder_compress_stream(Encoder, process, Data).
 
 -spec finish(Encoder :: t()) -> {ok, iodata()} | error.
 finish(Encoder) ->
     finish(Encoder, []).
 
+
 -spec finish(Encoder :: t(), Data :: iodata()) -> {ok, iodata()} | error.
 finish(Encoder, Data) ->
-    case brotli_nif:encoder_compress_stream(Encoder, finish, Data) of
-        true ->
-            {ok, extract_output(Encoder)};
-        false ->
-            error
-    end.
-
-extract_output(Encoder) ->
-    case brotli_nif:encoder_has_more_output(Encoder) of
-        false -> [];
-        true -> [brotli_nif:encoder_take_output(Encoder) | extract_output(Encoder)]
-    end.
+    brotli_nif:encoder_compress_stream(Encoder, finish, Data).
 
 -spec is_finished(Encoder :: t()) -> boolean().
 is_finished(Encoder) ->
     brotli_nif:encoder_is_finished(Encoder).
+

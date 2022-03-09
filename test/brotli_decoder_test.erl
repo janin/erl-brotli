@@ -23,3 +23,4 @@ not_finished_on_partial_input_test() ->
     Decoder = brotli_decoder:new(),
     brotli_decoder:stream(Decoder, <<B>>),
     ?assertNot(brotli_decoder:is_finished(Decoder)).
+
