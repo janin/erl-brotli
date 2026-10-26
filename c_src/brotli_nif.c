@@ -344,8 +344,12 @@ brotli_decoder_decompress_stream(ErlNifEnv *env, int argc,
     }
   }
 
-  if (result != BROTLI_DECODER_RESULT_ERROR) {
-    return enif_make_tuple2(env, atom_ok, enif_make_binary(env, &output)); 
+  if (result == BROTLI_DECODER_RESULT_SUCCESS) {
+    return enif_make_tuple2(env, atom_ok, enif_make_binary(env, &output));
+  }
+
+  if (result == BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT) {
+    return enif_make_tuple2(env, atom_more, enif_make_binary(env, &output));
   }
 
   enif_release_binary(&output);
