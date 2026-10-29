@@ -23,3 +23,12 @@ not_finished_on_partial_input_test() ->
     Decoder = brotli_decoder:new(),
     brotli_decoder:stream(Decoder, <<B>>),
     ?assertNot(brotli_decoder:is_finished(Decoder)).
+
+
+more_on_partial_input_test() ->
+    {ok, Encoded} = brotli:encode(<<"test">>),
+    Size = byte_size(Encoded),
+    <<Head:(Size - 1)/binary, Last/binary>> = Encoded,
+    Decoder = brotli_decoder:new(),
+    ?assertMatch({more, _}, brotli_decoder:stream(Decoder, Head)),
+    ?assertMatch({ok, _}, brotli_decoder:stream(Decoder, Last)).

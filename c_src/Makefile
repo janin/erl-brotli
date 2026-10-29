@@ -5,9 +5,13 @@ BASEDIR := $(abspath $(CURDIR)/..)
 
 PROJECT = brotli
 
-ERTS_INCLUDE_DIR ?= $(shell erl -noshell -s init stop -eval "io:format(\"~s/erts-~s/include/\", [code:root_dir(), erlang:system_info(version)]).")
+ERTS_INCLUDE_DIR ?= $(shell erl -noshell -eval "io:format(\"~s/erts-~s/include/\", [code:root_dir(), erlang:system_info(version)])." -s init stop)
 
-OUT ?= $(BASEDIR)/priv
+ifndef REBAR_BARE_COMPILER_OUTPUT_DIR
+	OUT ?= $(BASEDIR)/priv
+else
+	OUT ?= $(REBAR_BARE_COMPILER_OUTPUT_DIR)/priv
+endif
 
 # System type and C compiler/flags.
 #

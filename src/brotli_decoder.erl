@@ -40,14 +40,7 @@ new() ->
 
 -spec stream(Decoder :: t(), Data :: iodata()) -> {ok | more, iodata()} | error.
 stream(Decoder, Data) ->
-    case brotli_nif:decoder_decompress_stream(Decoder, Data) of
-        ok ->
-            {ok, brotli_nif:decoder_take_output(Decoder)};
-        more ->
-            {more, brotli_nif:decoder_take_output(Decoder)};
-        Other ->
-            Other
-    end.
+    brotli_nif:decoder_decompress_stream(Decoder, Data).
 
 is_finished(Decoder) ->
     brotli_nif:decoder_is_finished(Decoder).
